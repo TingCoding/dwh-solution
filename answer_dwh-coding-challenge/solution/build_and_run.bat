@@ -5,7 +5,7 @@ set IMAGE_NAME=dwh-coding-challenge
 set CONTAINER_NAME=dwh-solution
 
 echo Building Docker image...
-REM Build dari root repo (..), tapi Dockerfile ada di folder solution
+REM
 docker build -t %IMAGE_NAME% -f "%~dp0Dockerfile" "%~dp0.."
 if %ERRORLEVEL% NEQ 0 (
   echo Failed to build Docker image

@@ -1,17 +1,3 @@
-"""
-DWH Coding Challenge – Reference Solution (single file) - FIXED v2
-
-Implements README tasks:
-1) Print historical view for each table (accounts, cards, saving_accounts).
-2) Print historical view for the denormalized joined table (accounts + cards + saving).
-3) Detect transactions (any change in saving balance or card credit_used), print when and how much.
-
-Improvements:
-- Fixed deprecated pandas methods (fillna with method parameter)
-- Better NaN handling for cleaner output
-- Added proper groupby parameter for future compatibility
-"""
-
 import os
 import json
 import glob
@@ -21,13 +7,11 @@ from typing import Dict, Any, List, Tuple, Optional
 import pandas as pd
 import warnings
 
-# Suppress specific warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
-# ---------- Config & Paths ----------
-DEFAULT_ROOT = Path(__file__).resolve().parents[1]          # .../dwh-coding-challenge
-DATA_ROOT = os.environ.get("DATA_ROOT", str(DEFAULT_ROOT))  # env override if needed
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = os.environ.get("DATA_ROOT", str(DEFAULT_ROOT))
 
 pd.set_option("display.max_columns", 200)
 pd.set_option("display.width", 200)
@@ -35,10 +19,6 @@ pd.set_option("display.max_colwidth", 200)
 
 
 def ensure_data_unzipped() -> str:
-    """
-    If DATA_ROOT is a .zip file path, unzip it next to itself (without extension) and return that dir.
-    If DATA_ROOT is a directory, return it as-is.
-    """
     root = DATA_ROOT
     if root.lower().endswith(".zip"):
         out_dir = root[:-4]
@@ -59,15 +39,6 @@ def _iter_event_files(table_dir: str) -> List[str]:
 
 
 def read_event_logs(table_dir: str) -> pd.DataFrame:
-    """
-    Reads event logs (JSON or JSONL) into a single DataFrame.
-    Expected event fields per row:
-      - id: record id
-      - op: 'c' (create) or 'u' (update)
-      - ts: timestamp iso string
-      - data: dict (for create)
-      - set: dict (for update)
-    """
     rows: List[Dict[str, Any]] = []
 
     for path in _iter_event_files(table_dir):
@@ -81,7 +52,6 @@ def read_event_logs(table_dir: str) -> pd.DataFrame:
                 o["_source_file"] = os.path.relpath(path, table_dir)
                 rows.append(o)
 
-            # 1) try full JSON (object/array)
             try:
                 data = json.loads(content)
                 if isinstance(data, list):
@@ -93,7 +63,6 @@ def read_event_logs(table_dir: str) -> pd.DataFrame:
             except Exception:
                 pass
 
-            # 2) fallback: JSON Lines
             for i, line in enumerate(content.splitlines(), start=1):
                 line = line.strip()
                 if not line:
@@ -177,7 +146,6 @@ def find_table_dirs(data_dir: str) -> Dict[str, Optional[str]]:
     candidates = {
         "accounts": ["accounts"],
         "cards": ["cards"],
-        # dukung kedua ejaan: saving_accounts / savings_accounts
         "saving_accounts": ["saving_accounts", "savings_accounts", "saving", "savings"],
     }
     found: Dict[str, Optional[str]] = {}
@@ -187,7 +155,7 @@ def find_table_dirs(data_dir: str) -> Dict[str, Optional[str]]:
     return found
 
 
-# ---------- Build denormalized joined timeline (FIXED with better NaN handling) ----------
+# ---------- Build denormalized joined timeline ----------
 
 def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame, Optional[str]]:
     """
@@ -199,30 +167,25 @@ def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame,
     card = histories.get("cards", pd.DataFrame()).copy()
     sav = histories.get("saving_accounts", pd.DataFrame()).copy()
 
-    # Debug: print available columns
-    print("\n[DEBUG] Available columns:")
+    print("\nAvailable columns:")
     print(f"  accounts: {list(acc.columns) if not acc.empty else 'EMPTY'}")
     print(f"  cards: {list(card.columns) if not card.empty else 'EMPTY'}")
     print(f"  saving_accounts: {list(sav.columns) if not sav.empty else 'EMPTY'}")
 
-    # Check if we have data
     if acc.empty or (card.empty and sav.empty):
-        print("[DEBUG] Missing required data for join")
+        print("Missing required data for join")
         return pd.DataFrame(), None
 
-    # Find account_id column in each table
     def find_account_id_col(df: pd.DataFrame, table_name: str) -> Optional[str]:
         if df.empty:
             return None
-        # Check common variations
         candidates = ['account_id', 'accountId', 'acc_id', 'record_id']
         for col in candidates:
             if col in df.columns:
-                print(f"[DEBUG] {table_name}: using '{col}' as account identifier")
+                print(f"{table_name}: using '{col}' as account identifier")
                 return col
-        # If it's accounts table, record_id IS the account_id
         if table_name == 'accounts' and 'record_id' in df.columns:
-            print(f"[DEBUG] {table_name}: using 'record_id' as account_id")
+            print(f"{table_name}: using 'record_id' as account_id")
             return 'record_id'
         return None
 
@@ -231,20 +194,17 @@ def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame,
     sav_id_col = find_account_id_col(sav, 'saving_accounts')
 
     if not acc_id_col:
-        print("[DEBUG] Cannot find account_id column in accounts table")
+        print("Cannot find account_id column in accounts table")
         return pd.DataFrame(), None
 
-    # Prepare accounts table
     acc_prep = acc.copy()
     if acc_id_col != 'account_id':
         acc_prep['account_id'] = acc_prep[acc_id_col]
     
-    # Add prefix to all columns except ts and account_id
     for col in acc_prep.columns:
         if col not in ['ts', 'account_id']:
             acc_prep.rename(columns={col: f'account_{col}'}, inplace=True)
 
-    # Prepare cards table
     card_prep = pd.DataFrame()
     if not card.empty and card_id_col:
         card_prep = card.copy()
@@ -254,7 +214,6 @@ def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame,
             if col not in ['ts', 'account_id']:
                 card_prep.rename(columns={col: f'card_{col}'}, inplace=True)
 
-    # Prepare saving_accounts table
     sav_prep = pd.DataFrame()
     if not sav.empty and sav_id_col:
         sav_prep = sav.copy()
@@ -264,7 +223,6 @@ def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame,
             if col not in ['ts', 'account_id']:
                 sav_prep.rename(columns={col: f'saving_{col}'}, inplace=True)
 
-    # Combine all events chronologically
     all_events = []
     
     if not acc_prep.empty:
@@ -280,26 +238,21 @@ def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame,
         all_events.append(sav_prep)
 
     if not all_events:
-        print("[DEBUG] No events to combine")
+        print("No events to combine")
         return pd.DataFrame(), None
 
-    # Concatenate all events
     combined = pd.concat(all_events, ignore_index=True, sort=False)
     combined['_ts'] = pd.to_datetime(combined['ts'], errors='coerce')
     combined = combined.sort_values(by=['account_id', '_ts', '_source']).reset_index(drop=True)
 
-    print(f"[DEBUG] Combined events: {len(combined)} rows")
+    print(f"Combined events: {len(combined)} rows")
 
-    # FIXED: Use ffill() instead of deprecated fillna(method='ffill')
-    # Forward-fill by account_id to propagate state
     combined = combined.groupby('account_id', group_keys=False).apply(
         lambda g: g.ffill()
     ).reset_index(drop=True)
 
-    # Drop temporary columns
     combined = combined.drop(columns=['_source', '_ts'])
 
-    # Normalize column names for easier transaction detection
     rename_map = {}
     for col in combined.columns:
         if 'balance' in col.lower() and 'saving' in col:
@@ -310,13 +263,13 @@ def build_denorm_join(histories: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame,
     if rename_map:
         combined = combined.rename(columns=rename_map)
 
-    print(f"[DEBUG] Final joined table: {len(combined)} rows, {len(combined.columns)} columns")
-    print(f"[DEBUG] Final columns: {list(combined.columns)}")
+    print(f"Final joined table: {len(combined)} rows, {len(combined.columns)} columns")
+    print(f"Final columns: {list(combined.columns)}")
 
     return combined, card_id_col or sav_id_col
 
 
-# ---------- Detect transactions (FIXED) ----------
+# ---------- Detect transactions ----------
 
 def detect_transactions(joined: pd.DataFrame) -> pd.DataFrame:
     """
@@ -327,15 +280,13 @@ def detect_transactions(joined: pd.DataFrame) -> pd.DataFrame:
 
     rows: List[Dict[str, Any]] = []
 
-    print(f"\n[DEBUG] Detecting transactions from {len(joined)} rows")
-    print(f"[DEBUG] Available columns: {list(joined.columns)}")
+    print(f"\nDetecting transactions from {len(joined)} rows")
+    print(f"Available columns: {list(joined.columns)}")
 
-    # Detect saving balance changes
     if 'saving_balance' in joined.columns and 'account_id' in joined.columns:
-        print("[DEBUG] Checking saving_balance changes...")
+        print("Checking saving_balance changes...")
         sav_cols = ['account_id', 'ts', 'saving_balance']
         
-        # Add record_id if available
         rec_col = None
         for col in ['saving_record_id', 'record_id']:
             if col in joined.columns:
@@ -347,9 +298,8 @@ def detect_transactions(joined: pd.DataFrame) -> pd.DataFrame:
         sav_data['saving_balance'] = pd.to_numeric(sav_data['saving_balance'], errors='coerce')
         sav_data = sav_data.dropna(subset=['saving_balance'])
         
-        print(f"[DEBUG] Found {len(sav_data)} saving balance records")
+        print(f"Found {len(sav_data)} saving balance records")
         
-        # Group by account (and record_id if available)
         group_cols = ['account_id']
         if rec_col:
             group_cols.append(rec_col)
@@ -374,12 +324,10 @@ def detect_transactions(joined: pd.DataFrame) -> pd.DataFrame:
                 
                 prev_balance = cur_balance
 
-    # Detect card credit_used changes
     if 'card_credit_used' in joined.columns and 'account_id' in joined.columns:
-        print("[DEBUG] Checking card_credit_used changes...")
+        print("Checking card_credit_used changes...")
         card_cols = ['account_id', 'ts', 'card_credit_used']
         
-        # Add record_id if available
         rec_col = None
         for col in ['card_record_id', 'record_id']:
             if col in joined.columns:
@@ -391,9 +339,8 @@ def detect_transactions(joined: pd.DataFrame) -> pd.DataFrame:
         card_data['card_credit_used'] = pd.to_numeric(card_data['card_credit_used'], errors='coerce')
         card_data = card_data.dropna(subset=['card_credit_used'])
         
-        print(f"[DEBUG] Found {len(card_data)} card credit_used records")
+        print(f"Found {len(card_data)} card credit_used records")
         
-        # Group by account (and record_id if available)
         group_cols = ['account_id']
         if rec_col:
             group_cols.append(rec_col)
@@ -418,7 +365,7 @@ def detect_transactions(joined: pd.DataFrame) -> pd.DataFrame:
                 
                 prev_credit = cur_credit
 
-    print(f"[DEBUG] Detected {len(rows)} transactions")
+    print(f"Detected {len(rows)} transactions")
 
     if not rows:
         return pd.DataFrame()
@@ -440,13 +387,10 @@ def format_dataframe_for_display(df: pd.DataFrame, max_rows: int = None) -> str:
     if df.empty:
         return "(empty)"
     
-    # Create a copy to avoid modifying original
     display_df = df.copy()
     
-    # Replace NaN and None with empty string for display
     display_df = display_df.fillna('')
     
-    # Convert to string with proper formatting
     if max_rows:
         return display_df.head(max_rows).to_string(index=False)
     return display_df.to_string(index=False)
@@ -460,7 +404,6 @@ def main():
     if not os.path.isdir(data_dir):
         raise SystemExit(f"Data directory not found at: {data_dir}")
 
-    # 1) Historical views
     table_dirs = find_table_dirs(data_dir)
     histories: Dict[str, pd.DataFrame] = {}
     for name, tdir in table_dirs.items():
@@ -478,13 +421,11 @@ def main():
             cols = ["record_id", "version", "ts"] + [c for c in hist.columns if c not in ("record_id", "version", "ts")]
             print(format_dataframe_for_display(hist[cols]))
 
-    # 2) Denormalized joined timeline
     joined, join_key = build_denorm_join(histories)
     print("\n===== Denormalized joined historical view =====")
     if joined.empty:
         print("(not available due to missing join keys or empty inputs)")
     else:
-        # Select display columns
         display_cols = ['account_id', 'ts']
         priority_cols = ['account_record_id', 'card_record_id', 'saving_record_id', 
                         'saving_balance', 'card_credit_used', 'account_version', 
@@ -494,14 +435,12 @@ def main():
             if col in joined.columns and col not in display_cols:
                 display_cols.append(col)
         
-        # Add remaining columns
         for col in joined.columns:
             if col not in display_cols:
                 display_cols.append(col)
         
         print(format_dataframe_for_display(joined[display_cols]))
 
-    # 3) Transactions
     print("\n===== Transactions detected (changes in saving balance or card credit_used) =====")
     tx = detect_transactions(joined) if not joined.empty else pd.DataFrame()
     if tx.empty:
