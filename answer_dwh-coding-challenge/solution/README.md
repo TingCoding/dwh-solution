@@ -61,8 +61,8 @@ dwh-coding-challenge/
     └── saving_accounts/
 ```
 
-## Syarat instalasi
-install atau nyalakan docker desktop
+## Requirements
+install or launch docker desktop
 
 ### Option 1: Using Build Scripts
 
@@ -82,14 +82,14 @@ cd solution
 ### Option 2: Manual Docker Commands
 
 ```bash
-# Build image agar bisa build container
+# Build image to build containers
 cd ..
 docker build -t dwh-coding-challenge -f solution/Dockerfile .
 
-# Run container agar muncul di docker local
+# Run the container to appear in the local docker
 docker run --name dwh-solution dwh-coding-challenge
 
-# Cleanup atau hapus container ini di docker
+# Cleanup or delete this container in docker
 docker rm dwh-solution
 ```
 
